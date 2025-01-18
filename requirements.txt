@@ -1,0 +1,10 @@
+# LangChain and related libraries
+langchain>=0.0.200  # Language model utilities
+langchain-openai>=0.1.0  # LangChain integration with OpenAI
+
+# API framework
+fastapi>=0.85.0  # FastAPI for building APIs
+
+# Machine learning and transformers
+torch>=1.10.0  # PyTorch for deep learning
+transformers>=4.30.0  # Hugging Face Transformers library
