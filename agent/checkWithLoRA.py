@@ -1,78 +1,57 @@
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from openpyxl.styles.builtins import output
+from transformers import (
+    AutoTokenizer,
+    BertForSequenceClassification,)
 
-class LocalModelEmailClassifier:
-    def __init__(self, model_path):
-        """
-        Initialize the EmailClassifier with the local model path.
-        """
-        self.model_path = model_path
-        self.tokenizer = None
-        self.model = None
+import torch
 
-    def load_model(self):
-        """
-        Load the local model and tokenizer.
-        """
-        print(f"Loading model from {self.model_path}...")
-        self.tokenizer = AutoTokenizer.from_pretrained(self.model_path)
-        self.model = AutoModelForCausalLM.from_pretrained(self.model_path)
+class EmailClassifierLora:
+    def __init__(self, email, betreff, url, absender):
+        self.email=email
+        self.betreff=betreff
+        self.url=url
+        self.absender=absender
+        self.tokenizer = AutoTokenizer.from_pretrained("RandomAB/CyberSec_Bert_Tokenizer3")
+        self.model_checkpoint = 'RandomAB/CyberSec_Bert_Model3'
 
-    def classify_email(self, email_content):
-        """
-        Classify an email using the local model.
-        """
-        if not self.model or not self.tokenizer:
-            raise RuntimeError("Model or tokenizer is not loaded. Call load_model() first.")
+        # define label maps
+        self.id2label = {0: "Ham", 1: "Spam"}
+        self.label2id = {"Ham": 0, "Spam": 1}
+        self.model = BertForSequenceClassification.from_pretrained(
+            self.model_checkpoint, num_labels=2, id2label=self.id2label, label2id=self.label2id)
+        self.model.to('cpu')
+        # add pad token if none exists
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.add_special_tokens({'pad_token': '[PAD]'})
+            self.model.resize_token_embeddings(len(self.tokenizer))
 
-        # Prepare the input prompt
-        prompt = (
-            f"Classify the following email as phishing or ham. "
-            f"Provide a score between 0 (very unlikely phishing) to 1 (very likely phishing):\n\n"
-            f"{email_content}\n\n"
-            f"Response:"
-        )
+    def get_attributes_as_list(self):
+        return [self.email, self.betreff, self.absender, self.url]
 
-        # Tokenize the input
-        inputs = self.tokenizer.encode(prompt, return_tensors="pt")
 
-        # Generate the model's response
-        outputs = self.model.generate(inputs, max_length=100, num_return_sequences=1)
-        response = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
 
-        # Extract numerical score from the response
-        try:
-            score = float(response.split()[-1])
-            score = min(max(score, 0), 1)  # Ensure the score is within 0-1
-        except ValueError:
-            score = 0.5  # Default to neutral if parsing fails
 
-        return score, response
+    # generate classification model from model_checkpoint
 
+
+    # define list of examples
+    text_list = ["Dear client, we need you to update your billing information. Click here to .", "resourceful and ingenious entertainment .", "it 's just incredibly dull .", "the movie 's biggest offense is its complete and utter lack of tension .",
+                 "Click on this link.This is Spam", "unless you are in dire need of a diesel fix , there is no real reason to see it ."]
+
+    text_list2 = ["Das ist eine Spam Nachricht","Your iCloud storage is almost full. Please click on the link", " Hallo, wie gehts dir?","Hello, how are you?"]
+
+
+    print("Untrained model predictions:")
+    print("----------------------------")
     @staticmethod
-    def main():
-        """
-        Main method to demonstrate email classification.
-        """
-        # Path to the local model
-        MODEL_PATH = "/Users/houda/Downloads/lora_finetuned_model/"  # Replace with the actual path to your model
+    def classify(self, email, betreff, url, absender):
 
-        # Initialize the classifier
-        classifier = LocalModelEmailClassifier(MODEL_PATH)
-        classifier.load_model()
+        ausgabe=list()
+        for text in self.get_attributes_as_list():
+            inputs = self.tokenizer.encode(text, return_tensors="pt").to("cpu")
+            logits = self.model(inputs).logits
+            prediction = torch.argmax(logits)
+            ausgabe.append(text + " - " + self.id2label[prediction.tolist()])
+            print(text + " - " + self.id2label[prediction.tolist()])
 
-        # Example email content
-        email_content = """
-        Dear User,
-        Your account has been compromised. Click here to reset your password immediately: http://fakeurl.com
-        """
-
-        # Classify the email
-        print("Classifying email...")
-        score, response = classifier.classify_email(email_content)
-        print(f"Phishing Likelihood Score: {score:.2f}")
-        print(f"Model Response: {response}")
-
-
-# Run the main method
-if __name__ == "__main__":
-    LocalModelEmailClassifier.main()
+        return ausgabe
