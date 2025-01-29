@@ -1,12 +1,15 @@
 import re
 from email import message_from_bytes
-from typing import Dict
+from typing import Dict, List
 
+import pandas as pd
 import uvicorn
+from fastapi.responses import FileResponse
 from bs4 import BeautifulSoup
 from fastapi import FastAPI, Query, File, UploadFile
 from huggingface_hub._webhooks_server import JSONResponse
 from requests.compat import chardet
+from io import StringIO
 
 from checkWithLLM import EmailClassifier
 from checkWithLoRA import EmailClassifierLora
@@ -124,27 +127,31 @@ def parse_txt(file: bytes) -> Dict:
     }
 
 @app.post("/uploadMail")
-async def upload_mail(file: UploadFile):
+async def upload_mail(files: List[UploadFile] = File(...)):
     """
     Endpoint to upload a mail file (eml, pdf, text, html) and extract the subject (betreff),
     sender (absender), URLs, and email content.
     """
-    content =  file.file.read()
-    # Handle different file types based on file extension
-    if file.filename.endswith(".eml"):
-        result = parse_eml(content)
-    #elif file.filename.endswith(".pdf"):
-    #    result = parse_pdf(content)
-    elif file.filename.endswith(".txt"):
-        result = parse_txt(content)
-    elif file.filename.endswith(".html") or file.filename.endswith(".htm"):
-        result = parse_htm(content)
-    else:
-        return JSONResponse(
-            content={"error": "Unsupported file type. Please upload .eml, .pdf, .txt, or .html files."},
-            status_code=400,
-        )
-    return result
+    results=[]
+
+    for file in files:
+        content =  file.file.read()
+        # Handle different file types based on file extension
+        if file.filename.endswith(".eml"):
+            result = parse_eml(content)
+        #elif file.filename.endswith(".pdf"):
+        #    result = parse_pdf(content)
+        elif file.filename.endswith(".txt"):
+            result = parse_txt(content)
+        elif file.filename.endswith(".html") or file.filename.endswith(".htm"):
+            result = parse_htm(content)
+        else:
+            return JSONResponse(
+                content={"error": "Unsupported file type. Please upload .eml, .pdf, .txt, or .html files."},
+                status_code=400,
+            )
+        results.append(result)
+    return results
 
 @app.get("/checkMailLLM")
 async def check_mail_llm(
@@ -219,6 +226,48 @@ async def check_mail_llm(
         "TotalPhishingLikelihoodScore": total_score,
         "FinalAnalysis": "Phishing" if total_score > 0.5 else "Not Phishing"  # Begründung für Phishing
     }
+
+@app.post("/process_csv")
+async def process_csv(file: UploadFile = File(...),
+                      method: str = Query(..., description="Method to use Lora or LLM"),):
+    """
+    Endpoint to process a CSV file and classify each row of email data.
+    """
+    try:
+        # Read the uploaded CSV file into a pandas DataFrame
+        content = await file.read()
+        csv_data=StringIO(content.decode("utf-8"))
+      #  df = pd.read_csv(pd.compat.StringIO(content.decode("utf-8")))
+        df=pd.read_csv(csv_data)
+        # Ensure the dataset has the necessary columns
+        required_columns = {"Content", "Subject", "URL", "To"}
+        if not required_columns.issubset(df.columns):
+            return {"error": f"The CSV file must contain the following columns: {required_columns}"}
+
+        # Iterate through each row and classify
+        results = []
+        if(method=="lora"):
+            email_classifier = EmailClassifierLora("test","test","test","test")
+
+        for _, row in df.iterrows():
+
+            classification = email_classifier.classify(email_classifier,row["Content"],row["Subject"],row["URL"],row["To"])
+            results.append(classification)
+
+        # Convert the results to a DataFrame
+        results_df = pd.DataFrame(results)
+
+        # Save the DataFrame to a new CSV file
+        output_file = "classification_results.csv"
+        results_df.to_csv(output_file, index=False)
+
+        # Return the file as a response
+        return FileResponse(output_file, media_type="text/csv", filename="classification_results.csv")
+
+    #return results
+
+    except Exception as e:
+        return {"error": f"An error occurred while processing the file: {str(e)}"}
 
 
 
