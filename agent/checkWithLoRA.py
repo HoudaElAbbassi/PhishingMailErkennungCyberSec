@@ -54,4 +54,12 @@ class EmailClassifierLora:
             ausgabe.append(text + " - " + self.id2label[prediction.tolist()])
             print(text + " - " + self.id2label[prediction.tolist()])
 
+            # Softmax anwenden, um Wahrscheinlichkeiten zu erhalten
+            probabilities = torch.nn.functional.softmax(logits, dim=-1)
+
+            # Wahrscheinlichkeit für Phishing (Klasse 1)
+            p_phishing = probabilities[:, 1].item()
+
+            print(f"Phishing-Wahrscheinlichkeit: {p_phishing:.4f}")
+
         return ausgabe
