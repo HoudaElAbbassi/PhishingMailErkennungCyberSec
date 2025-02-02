@@ -1,11 +1,12 @@
 import json
+
+
 from langchain_core.messages import AIMessage
 from langchain_core.prompts import PromptTemplate
-from langchain_openai import AzureChatOpenAI
 
 
 class EmailClassifier:
-    def _init_(self, api_key, endpoint, deployment_name, email):
+    def __init__(self, api_key, endpoint, deployment_name, email,llm,prompt_template):
         """
         Initialize the EmailClassifier with Azure OpenAI credentials.
         """
@@ -13,22 +14,17 @@ class EmailClassifier:
         self.endpoint = endpoint
         self.deployment_name = deployment_name
         self.email = email
-        self.llm = None
-        self.chain = None
+        self.llm= llm
+        self.chain =  prompt_template | llm
 
-    def initialize_model(self):
+    @staticmethod
+    def initialize_model(self,llm):
         """
         Initialize the Azure OpenAI LLM with LangChain.
         """
         print("Initializing Azure OpenAI LLM...")
-        self.llm = AzureChatOpenAI(
-            azure_endpoint=self.endpoint,
-            api_key=self.api_key,
-            azure_deployment=self.deployment_name,
-            api_version="2024-05-01-preview",
-        )
 
-        # Define the prompt template for email classification
+       # Define the prompt template for email classification
         prompt_template = PromptTemplate(
             input_variables=["email_content"],
             template="""
@@ -88,9 +84,9 @@ Provide the final classification and phishing likelihood score along with scores
         )
 
         # Create the LLM chain
-        self.chain = prompt_template | self.llm
+        self.chain = prompt_template | llm
 
-    def classify_email(self):
+    def classify_email(self,llm):
         """
         Classify an email and return detailed scores and analysis dynamically.
         """
@@ -124,17 +120,75 @@ Provide the final classification and phishing likelihood score along with scores
             raise
 
     @staticmethod
-    def main(api_key, endpoint, deployment_name, email):
+    def main(api_key, endpoint, deployment_name, email,llm):
         """
         Main method to demonstrate email classification.
         """
+        prompt=  prompt_template = PromptTemplate(
+            input_variables=["email_content"],
+            template="""
+Below are examples of email classification with step-by-step reasoning:
+Example 1:
+Email: "Your account has been locked. Click here to unlock."
+Step-by-step analysis:
+1. The sender's email address is suspicious and does not match the official domain.
+2. The language is urgent and manipulative ("Your account has been locked").
+3. The link points to a non-official domain ("Click here to unlock").
+4. URL uses unusual subdomains or parameters.
+5. URL domain does not match common patterns for the claimed organization.
+Result: Phishing, Score: 0.9
+
+Example 2:
+Email: "Here is your invoice for the month."
+Step-by-step analysis:
+1. The sender's email address matches the official company domain.
+2. The language is neutral and does not create urgency.
+3. No suspicious links are present.
+4. URL domain matches official company patterns.
+5. URL contains expected secure parameters.
+Result: Not Phishing, Score: 0.1
+
+You are an AI tasked with classifying emails for phishing detection. Analyze the email below and provide a JSON response with the following keys:
+- subject_score
+- sender_score
+- content_score
+- url_score
+- subject_analysis
+- sender_analysis
+- content_analysis
+- url_analysis
+
+Response format (strictly JSON):
+{{
+    "subject_score": 0.0,
+    "sender_score": 0.0,
+    "content_score": 0.0,
+    "url_score": 0.0,
+    "subject_analysis": "string",
+    "sender_analysis": "string",
+    "content_analysis": "string",
+    "url_analysis": "string"
+}}
+
+Classify the following email:
+Email: {email_content}
+Step-by-step analysis:
+1. Analyze the sender's email address.
+2. Check for misleading or urgent language.
+3. Evaluate any URLs in the email for unusual patterns or parameters.
+4. Compare the URL domain with common patterns for trusted organizations.
+5. Assign a score based on the findings and classify the email as Phishing or Not Phishing.
+Provide the final classification and phishing likelihood score along with scores for each component (subject, sender, content, url).
+            """,
+        )
+
         # Initialize the classifier
-        classifier = EmailClassifier(api_key, endpoint, deployment_name, email)
-        classifier.initialize_model()
+        classifier = EmailClassifier(api_key, endpoint, deployment_name, email,llm,prompt_template=prompt)#,llm)
+        #classifier.initialize_model(llm)
 
         # Classify the email
         print("Classifying email...")
-        response = classifier.classify_email()
+        response = classifier.classify_email(llm)
         print(f"Model Response: {response}")
         return response, response
 

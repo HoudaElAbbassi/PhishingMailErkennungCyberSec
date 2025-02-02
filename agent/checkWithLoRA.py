@@ -1,3 +1,4 @@
+from fastapi.logger import logger
 from openpyxl.styles.builtins import output
 from transformers import (
     AutoTokenizer,
@@ -5,12 +6,13 @@ from transformers import (
 
 import torch
 
+
 class EmailClassifierLora:
-    def __init__(self, email, betreff, url, absender):
-        self.email=email
-        self.betreff=betreff
-        self.url=url
-        self.absender=absender
+    def __init__(self):#, email, betreff, url, absender):
+        #self.email=email
+        #self.betreff=betreff
+        #self.url=url
+        #self.absender=absender
         self.tokenizer = AutoTokenizer.from_pretrained("RandomAB/CyberSec_Bert_Tokenizer3")
         self.model_checkpoint = 'RandomAB/CyberSec_Bert_Model3'
 
@@ -26,7 +28,7 @@ class EmailClassifierLora:
             self.model.resize_token_embeddings(len(self.tokenizer))
 
     def get_attributes_as_list(self):
-        return [self.email, self.betreff, self.absender, self.url]
+        return ["email", "betreff", "absender", "url"]
 
 
 
@@ -45,21 +47,30 @@ class EmailClassifierLora:
     print("----------------------------")
     @staticmethod
     def classify(self, email, betreff, url, absender):
+        ausgabe=[]
+        inhalt_inputs=self.tokenizer(email, return_tensors="pt", truncation=True, padding=True)
+        betreff_inputs = self.tokenizer(betreff, return_tensors="pt", truncation=True, padding=True)
+        absender_inputs = self.tokenizer(absender, return_tensors="pt", truncation=True, padding=True)
+        url_inputs = self.tokenizer(url, return_tensors="pt", truncation=True, padding=True)
 
-        ausgabe=list()
-        for text in self.get_attributes_as_list():
-            inputs = self.tokenizer.encode(text, return_tensors="pt").to("cpu")
-            logits = self.model(inputs).logits
-            prediction = torch.argmax(logits)
-            ausgabe.append(text + " - " + self.id2label[prediction.tolist()])
-            print(text + " - " + self.id2label[prediction.tolist()])
+        with torch.no_grad():
+            inhalt_prob=torch.nn.functional.softmax(self.model(**inhalt_inputs).logits,dim=-1)[:,1].item()
+            betreff_prob = torch.nn.functional.softmax(self.model(**betreff_inputs).logits, dim=-1)[:, 1].item()
+            absender_prob = torch.nn.functional.softmax(self.model(**absender_inputs).logits, dim=-1)[:, 1].item()
+            url_prob = torch.nn.functional.softmax(self.model(**url_inputs).logits, dim=-1)[:, 1].item()
 
-            # Softmax anwenden, um Wahrscheinlichkeiten zu erhalten
-            probabilities = torch.nn.functional.softmax(logits, dim=-1)
+        final_score= (0.2 * betreff_prob) + (0.4 * inhalt_prob) + (0.2 * absender_prob) + (0.2 * url_prob)
+        classification="Phishing" if final_score >= 0.5 else "No Phishing"
+        ausgabe.append({
+            "subject": betreff,
+            "body": email,
+            "sender": absender,
+            "subject_prob": betreff_prob,
+            "body_prob": inhalt_prob,
+            "sender_prob": absender_prob,
+            "final_score": final_score,
+            "classification": classification
+        })
 
-            # Wahrscheinlichkeit für Phishing (Klasse 1)
-            p_phishing = probabilities[:, 1].item()
-
-            print(f"Phishing-Wahrscheinlichkeit: {p_phishing:.4f}")
 
         return ausgabe

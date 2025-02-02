@@ -8,11 +8,14 @@ from fastapi.responses import FileResponse
 from bs4 import BeautifulSoup
 from fastapi import FastAPI, Query, File, UploadFile
 from huggingface_hub._webhooks_server import JSONResponse
+from langchain_openai import AzureChatOpenAI
+from numpy.f2py.auxfuncs import throw_error
 from requests.compat import chardet
 from io import StringIO
 
 from checkWithLLM import EmailClassifier
 from checkWithLoRA import EmailClassifierLora
+from util import extract_email_details
 
 app = FastAPI()
 
@@ -154,7 +157,7 @@ async def upload_mail(files: List[UploadFile] = File(...)):
     return results
 
 @app.get("/checkMailLLM")
-async def check_mail_llm(
+async def  check_mail_llm(
     api_key: str = Query(..., description="Your Azure OpenAI API key"),
     endpoint: str = Query(..., description="Your Azure OpenAI endpoint"),
     deployment_name: str = Query(...,
@@ -163,7 +166,8 @@ async def check_mail_llm(
     sender: str = Query(..., description="The sender of the email"),
     recipient: str = Query(..., description="The recipient of the email"),
     content: str = Query(..., description="The content of the email"),
-    url: str = Query(..., description="The URL included in the email")
+    url: str = Query(..., description="The URL included in the email"),
+    llm: AzureChatOpenAI = Query(..., description="AzureOpenAI Objekt")
 ):
     """
     Check if an email is phishing using an LLM.
@@ -190,7 +194,7 @@ async def check_mail_llm(
 
 # Call the EmailClassifier once with all information
     combined_response, combined_analysis = EmailClassifier.main(
-        api_key, endpoint, deployment_name, email_content)
+        api_key, endpoint, deployment_name, email_content,llm)
 
     # Parse the combined response into individual components
     subject_score = combined_analysis.get("subject_score", 0.5)
@@ -229,42 +233,71 @@ async def check_mail_llm(
 
 @app.post("/process_csv")
 async def process_csv(file: UploadFile = File(...),
-                      method: str = Query(..., description="Method to use Lora or LLM"),):
+                      method: str = Query(..., description="Method to use lora or llm"),):
     """
     Endpoint to process a CSV file and classify each row of email data.
     """
     try:
         # Read the uploaded CSV file into a pandas DataFrame
         content = await file.read()
+        print("243")
         csv_data=StringIO(content.decode("utf-8"))
+        print("245")
       #  df = pd.read_csv(pd.compat.StringIO(content.decode("utf-8")))
-        df=pd.read_csv(csv_data)
+        df=pd.read_csv(csv_data, engine="python", header=None, names=["text", "spam"], on_bad_lines='error',quotechar="/")
+        print("248")
+        print(df.columns)
+        print(df['text'])
         # Ensure the dataset has the necessary columns
-        required_columns = {"Content", "Subject", "URL", "To"}
+        required_columns = {'text','spam'}
         if not required_columns.issubset(df.columns):
             return {"error": f"The CSV file must contain the following columns: {required_columns}"}
 
         # Iterate through each row and classify
         results = []
         if(method=="lora"):
-            email_classifier = EmailClassifierLora("test","test","test","test")
+            email_classifier = EmailClassifierLora()#"test","test","test","test")
+            for _, row in df.iterrows():
 
-        for _, row in df.iterrows():
-
-            classification = email_classifier.classify(email_classifier,row["Content"],row["Subject"],row["URL"],row["To"])
-            results.append(classification)
+                classification = email_classifier.classify(email_classifier,row["Content"],row["Subject"],row["URL"],row["To"])
+                results.append(classification)
+        elif(method=="llm"):
+            llm = AzureChatOpenAI(
+            azure_endpoint="https://uas00-m5yhmy73-swedencentral.openai.azure.com/",
+                api_key="88awryCwd7Qx2tZkQa71X4nGFN6jwakHWB645T84UmwGERKvkAEiJQQJ99BAACfhMk5XJ3w3AAAAACOGy8DM",
+                azure_deployment="gpt-4-32k",
+            api_version="2024-05-01-preview",
+        )
+            for _, row in df.iterrows():
+                print(row)
+                mail_row= extract_email_details(row["text"])
+                print(mail_row)
+                classification=await check_mail_llm(
+                        api_key="88awryCwd7Qx2tZkQa71X4nGFN6jwakHWB645T84UmwGERKvkAEiJQQJ99BAACfhMk5XJ3w3AAAAACOGy8DM",
+                        endpoint="https://uas00-m5yhmy73-swedencentral.openai.azure.com/",
+                        deployment_name="gpt-4-32k",
+                        subject=mail_row["Subject"],
+                        sender=mail_row["To"],
+                        recipient=mail_row["To"],
+                        content=mail_row["Content"],
+                        url=mail_row["URL"],
+                        llm= llm,
+                    )
+                print(classification)
+                results.append(classification)
+                #classification = email_classifier.main(email_classifier, row["Content"], row["Subject"], row["URL"],row["To"])
 
         # Convert the results to a DataFrame
         results_df = pd.DataFrame(results)
 
         # Save the DataFrame to a new CSV file
-        output_file = "classification_results.csv"
+        output_file = "classification_results2.csv"
         results_df.to_csv(output_file, index=False)
 
         # Return the file as a response
-        return FileResponse(output_file, media_type="text/csv", filename="classification_results.csv")
+        return FileResponse(output_file, media_type="text/csv", filename="classification_result@.csv")
 
-    #return results
+
 
     except Exception as e:
         return {"error": f"An error occurred while processing the file: {str(e)}"}
