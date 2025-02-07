@@ -39,7 +39,7 @@ Step-by-step analysis:
 5. URL domain does not match common patterns for the claimed organization.
 Result: Phishing, Score: 0.9
 
-Example 2:
+Example 2: 
 Email: "Here is your invoice for the month."
 Step-by-step analysis:
 1. The sender's email address matches the official company domain.
@@ -192,33 +192,3 @@ Provide the final classification and phishing likelihood score along with scores
         print(f"Model Response: {response}")
         return response, response
 
-    # @staticmethod
-    # def main(api_key, endpoint, deployment_name, email):
-    #     """
-    #     Main method to demonstrate email classification.
-    #     """
-    #     # Initialize the classifier
-    #     classifier = EmailClassifier(api_key, endpoint, deployment_name, email)
-    #     classifier.initialize_model()
-
-    #     # Classify the email
-    #     print("Classifying email...")
-    #     score, response = classifier.classify_email()
-    #     print(f"Phishing Likelihood Score: {score}")
-    #     print(f"Model Response: {response}")
-    #     return response, score
-
-
-# # Example usage
-# if _name_ == "_main_":
-#     API_KEY = "your-api-key"
-#     ENDPOINT = "your-endpoint"
-#     DEPLOYMENT_NAME = "your-deployment-name"
-
-#     EMAIL_CONTENT = """
-#     Dear User,
-#     Please click on the link below to verify your account:
-#     https://phishing-link.example.com
-#     """
-
-#     EmailClassifier.main(API_KEY, ENDPOINT, DEPLOYMENT_NAME, EMAIL_CONTENT)

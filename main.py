@@ -1,23 +1,21 @@
-import re
-from email import message_from_bytes
+import os
 from typing import Dict, List
 
 import pandas as pd
 import uvicorn
+from dotenv import load_dotenv
 from fastapi.responses import FileResponse
-from bs4 import BeautifulSoup
 from fastapi import FastAPI, Query, File, UploadFile
 from huggingface_hub._webhooks_server import JSONResponse
 from langchain_openai import AzureChatOpenAI
-from numpy.f2py.auxfuncs import throw_error
-from requests.compat import chardet
 from io import StringIO
 
 from checkWithLLM import EmailClassifier
 from checkWithLoRA import EmailClassifierLora
-from util import extract_email_details
+from util import extract_email_details, parse_eml, parse_txt, parse_htm
 
 app = FastAPI()
+load_dotenv()
 
 @app.post("/checkMailLoRa")
 async def upload_lora( email:str, betreff:str, url:str, absender:str):
@@ -27,109 +25,9 @@ async def upload_lora( email:str, betreff:str, url:str, absender:str):
     result = emailClassify.classify(emailClassify,email, betreff, url, absender)
     return result
 
-def clean_email_content(content: str) -> str:
-    """
-    Cleans email content by removing unnecessary line breaks, spaces, and artifacts.
-    """
-    # Remove metadata headers (From, Sent, To, Subject) if already parsed
-    content = re.sub(r"(From:.|Sent:.|To:.|Subject:.)", "", content, flags=re.IGNORECASE)
 
-    # Remove line break artifacts
-    content = re.sub(r"(\r\n|\n|\r)", " ", content)
 
-    # Fix broken words (e.g., "th\ne" -> "the")
-    content = re.sub(r"(?<=[a-zA-Z])\s+(?=[a-zA-Z])", "", content)
-
-    # Remove extra whitespace
-    content = re.sub(r"\s{2,}", " ", content)
-
-    # Strip leading/trailing whitespace
-    content = content.strip()
-
-    return content
-
-def parse_eml(file: bytes) -> Dict:
-    """Parse .eml file to extract relevant details."""
-    message = message_from_bytes(file)
-    subject = message.get("Subject", "No Subject")
-    sender = message.get("From", "No Sender")
-    urls = []
-    body = ""
-
-    if message.is_multipart():
-        for part in message.walk():
-            content_type = part.get_content_type()
-            if content_type == "text/plain":
-                body = part.get_payload(decode=True).decode("utf-8", errors="ignore")
-            elif content_type == "text/html":
-                html_content = part.get_payload(decode=True).decode("utf-8", errors="ignore")
-                soup = BeautifulSoup(html_content, "html.parser")
-                body = soup.get_text(separator="\n").strip()
-                urls = [a["href"] for a in soup.find_all("a", href=True)]
-    else:
-        body = message.get_payload(decode=True).decode("utf-8", errors="ignore")
-
-    return {"betreff": subject, "absender": sender, "url": urls, "email": clean_email_content(body)}
-
-def parse_htm(file: bytes) -> Dict:
-    """Parse .htm file to extract relevant details."""
-    soup = BeautifulSoup(file, "html.parser")
-
-    # Extract "Subject"
-    subject_tag = soup.find(text=re.compile(r"Subject:", re.IGNORECASE))
-    subject = subject_tag.split(":")[1].strip() if subject_tag else "No Subject"
-
-    # Extract "From"
-    from_tag = soup.find(text=re.compile(r"From:", re.IGNORECASE))
-    sender = from_tag.split(":")[1].strip() if from_tag else "No Sender"
-
-    # Extract "To"
-    to_tag = soup.find(text=re.compile(r"To:", re.IGNORECASE))
-    recipient = to_tag.split(":")[1].strip() if to_tag else "No Recipient"
-
-    # Extract URLs
-    urls = [a["href"] for a in soup.find_all("a", href=True)]
-
-    # Extract Email Body
-    body = soup.get_text(separator="\n").strip()
-
-    return {
-        "betreff": subject,
-        "absender": sender,
-        "empfänger": recipient,
-        "url": urls,
-        "email": clean_email_content(body),
-    }
-
-def parse_txt(file: bytes) -> Dict:
-    """Parse .txt file to extract details."""
-    encoding = chardet.detect(file)["encoding"]  # Detect encoding
-    text_content = file.decode(encoding, errors="ignore")
-
-    # Extract "Subject"
-    subject_match = re.search(r"Subject:\s*(.+)", text_content, re.IGNORECASE)
-    subject = subject_match.group(1).strip() if subject_match else "No Subject"
-
-    # Extract "From"
-    from_match = re.search(r"From:\s*(.+)", text_content, re.IGNORECASE)
-    sender = from_match.group(1).strip() if from_match else "No Sender"
-
-    # Extract "To"
-    to_match = re.search(r"To:\s*(.+)", text_content, re.IGNORECASE)
-    recipient = to_match.group(1).strip() if to_match else "No Recipient"
-
-    # Extract URLs
-    urls = re.findall(r"http[s]?://\S+", text_content)
-
-    return {
-        "betreff": subject,
-        "absender": sender,
-        "empfänger": recipient,
-        "url": urls,
-        "email": clean_email_content(text_content),
-    }
-
-@app.post("/uploadMail")
+@app.post("/uploadFile")
 async def upload_mail(files: List[UploadFile] = File(...)):
     """
     Endpoint to upload a mail file (eml, pdf, text, html) and extract the subject (betreff),
@@ -146,6 +44,7 @@ async def upload_mail(files: List[UploadFile] = File(...)):
         #    result = parse_pdf(content)
         elif file.filename.endswith(".txt"):
             result = parse_txt(content)
+
         elif file.filename.endswith(".html") or file.filename.endswith(".htm"):
             result = parse_htm(content)
         else:
@@ -228,10 +127,10 @@ async def  check_mail_llm(
             "analysis": combined_analysis.get("url_analysis", "No analysis available")
         },
         "TotalPhishingLikelihoodScore": total_score,
-        "FinalAnalysis": "Phishing" if total_score > 0.5 else "Not Phishing"  # Begründung für Phishing
+        "FinalAnalysis": "Phishing" if total_score > 0.5 else "Not Phishing"  # Begründung für Phishing wenn URL größer als 0.8 dann phishing
     }
 
-@app.post("/process_csv")
+@app.post("/uploadCSV")
 async def process_csv(file: UploadFile = File(...),
                       method: str = Query(..., description="Method to use lora or llm"),):
     """
@@ -256,26 +155,26 @@ async def process_csv(file: UploadFile = File(...),
         # Iterate through each row and classify
         results = []
         if(method=="lora"):
-            email_classifier = EmailClassifierLora()#"test","test","test","test")
+            email_classifier = EmailClassifierLora()
             for _, row in df.iterrows():
 
                 classification = email_classifier.classify(email_classifier,row["Content"],row["Subject"],row["URL"],row["To"])
                 results.append(classification)
         elif(method=="llm"):
             llm = AzureChatOpenAI(
-            azure_endpoint="https://uas00-m5yhmy73-swedencentral.openai.azure.com/",
-                api_key="88awryCwd7Qx2tZkQa71X4nGFN6jwakHWB645T84UmwGERKvkAEiJQQJ99BAACfhMk5XJ3w3AAAAACOGy8DM",
-                azure_deployment="gpt-4-32k",
-            api_version="2024-05-01-preview",
-        )
+                azure_endpoint=os.getenv("AZURE_ENDPOINT"),
+                api_key=os.getenv("AZURE_API_KEY"),
+                azure_deployment=os.getenv("AZURE_DEPLOYMENT"),
+                api_version="2024-05-01-preview",
+            )
             for _, row in df.iterrows():
                 print(row)
                 mail_row= extract_email_details(row["text"])
                 print(mail_row)
-                classification=await check_mail_llm(
-                        api_key="88awryCwd7Qx2tZkQa71X4nGFN6jwakHWB645T84UmwGERKvkAEiJQQJ99BAACfhMk5XJ3w3AAAAACOGy8DM",
-                        endpoint="https://uas00-m5yhmy73-swedencentral.openai.azure.com/",
-                        deployment_name="gpt-4-32k",
+                classification = await check_mail_llm(
+                        api_key=os.getenv("AZURE_API_KEY"),
+                        endpoint=os.getenv("AZURE_ENDPOINT"),
+                        deployment_name=os.getenv("AZURE_DEPLOYMENT"),
                         subject=mail_row["Subject"],
                         sender=mail_row["To"],
                         recipient=mail_row["To"],
@@ -285,17 +184,16 @@ async def process_csv(file: UploadFile = File(...),
                     )
                 print(classification)
                 results.append(classification)
-                #classification = email_classifier.main(email_classifier, row["Content"], row["Subject"], row["URL"],row["To"])
 
         # Convert the results to a DataFrame
         results_df = pd.DataFrame(results)
 
         # Save the DataFrame to a new CSV file
-        output_file = "classification_results2.csv"
+        output_file = "classification_results.csv"
         results_df.to_csv(output_file, index=False)
 
         # Return the file as a response
-        return FileResponse(output_file, media_type="text/csv", filename="classification_result@.csv")
+        return FileResponse(output_file, media_type="text/csv", filename="classification_results.csv")
 
 
 

@@ -1,5 +1,10 @@
 import re
 import random
+from email import message_from_bytes
+from typing import Dict
+
+from bs4 import BeautifulSoup
+from requests.compat import chardet
 
 
 def generate_random_email():
@@ -51,6 +56,108 @@ def extract_email_details(email_text):
         "URL": url,
         "From": sender,
         "To": sender
+    }
+
+def clean_email_content(content: str) -> str:
+    """
+    Cleans email content by removing unnecessary line breaks, spaces, and artifacts.
+    """
+    # Remove metadata headers (From, Sent, To, Subject) if already parsed
+    content = re.sub(r"(From:.|Sent:.|To:.|Subject:.)", "", content, flags=re.IGNORECASE)
+
+    # Remove line break artifacts
+    content = re.sub(r"(\r\n|\n|\r)", " ", content)
+
+    # Fix broken words (e.g., "th\ne" -> "the")
+    content = re.sub(r"(?<=[a-zA-Z])\s+(?=[a-zA-Z])", "", content)
+
+    # Remove extra whitespace
+    content = re.sub(r"\s{2,}", " ", content)
+
+    # Strip leading/trailing whitespace
+    content = content.strip()
+
+    return content
+
+def parse_eml(file: bytes) -> Dict:
+    """Parse .eml file to extract relevant details."""
+    message = message_from_bytes(file)
+    subject = message.get("Subject", "No Subject")
+    sender = message.get("From", "No Sender")
+    urls = []
+    body = ""
+
+    if message.is_multipart():
+        for part in message.walk():
+            content_type = part.get_content_type()
+            if content_type == "text/plain":
+                body = part.get_payload(decode=True).decode("utf-8", errors="ignore")
+            elif content_type == "text/html":
+                html_content = part.get_payload(decode=True).decode("utf-8", errors="ignore")
+                soup = BeautifulSoup(html_content, "html.parser")
+                body = soup.get_text(separator="\n").strip()
+                urls = [a["href"] for a in soup.find_all("a", href=True)]
+    else:
+        body = message.get_payload(decode=True).decode("utf-8", errors="ignore")
+
+    return {"betreff": subject, "absender": sender, "url": urls, "email": clean_email_content(body)}
+
+def parse_htm(file: bytes) -> Dict:
+    """Parse .htm file to extract relevant details."""
+    soup = BeautifulSoup(file, "html.parser")
+
+    # Extract "Subject"
+    subject_tag = soup.find(text=re.compile(r"Subject:", re.IGNORECASE))
+    subject = subject_tag.split(":")[1].strip() if subject_tag else "No Subject"
+
+    # Extract "From"
+    from_tag = soup.find(text=re.compile(r"From:", re.IGNORECASE))
+    sender = from_tag.split(":")[1].strip() if from_tag else "No Sender"
+
+    # Extract "To"
+    to_tag = soup.find(text=re.compile(r"To:", re.IGNORECASE))
+    recipient = to_tag.split(":")[1].strip() if to_tag else "No Recipient"
+
+    # Extract URLs
+    urls = [a["href"] for a in soup.find_all("a", href=True)]
+
+    # Extract Email Body
+    body = soup.get_text(separator="\n").strip()
+
+    return {
+        "betreff": subject,
+        "absender": sender,
+        "empfänger": recipient,
+        "url": urls,
+        "email": clean_email_content(body),
+    }
+
+def parse_txt(file: bytes) -> Dict:
+    """Parse .txt file to extract details."""
+    encoding = chardet.detect(file)["encoding"]  # Detect encoding
+    text_content = file.decode(encoding, errors="ignore")
+
+    # Extract "Subject"
+    subject_match = re.search(r"Subject:\s*(.+)", text_content, re.IGNORECASE)
+    subject = subject_match.group(1).strip() if subject_match else "No Subject"
+
+    # Extract "From"
+    from_match = re.search(r"From:\s*(.+)", text_content, re.IGNORECASE)
+    sender = from_match.group(1).strip() if from_match else "No Sender"
+
+    # Extract "To"
+    to_match = re.search(r"To:\s*(.+)", text_content, re.IGNORECASE)
+    recipient = to_match.group(1).strip() if to_match else "No Recipient"
+
+    # Extract URLs
+    urls = re.findall(r"http[s]?://\S+", text_content)
+
+    return {
+        "betreff": subject,
+        "absender": sender,
+        "empfänger": recipient,
+        "url": urls,
+        "email": clean_email_content(text_content),
     }
 
 

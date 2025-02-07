@@ -1,5 +1,3 @@
-from fastapi.logger import logger
-from openpyxl.styles.builtins import output
 from transformers import (
     AutoTokenizer,
     BertForSequenceClassification,)
@@ -8,11 +6,8 @@ import torch
 
 
 class EmailClassifierLora:
-    def __init__(self):#, email, betreff, url, absender):
-        #self.email=email
-        #self.betreff=betreff
-        #self.url=url
-        #self.absender=absender
+    def __init__(self):
+
         self.tokenizer = AutoTokenizer.from_pretrained("RandomAB/CyberSec_Bert_Tokenizer3")
         self.model_checkpoint = 'RandomAB/CyberSec_Bert_Model3'
 
@@ -30,21 +25,6 @@ class EmailClassifierLora:
     def get_attributes_as_list(self):
         return ["email", "betreff", "absender", "url"]
 
-
-
-
-    # generate classification model from model_checkpoint
-
-
-    # define list of examples
-    text_list = ["Dear client, we need you to update your billing information. Click here to .", "resourceful and ingenious entertainment .", "it 's just incredibly dull .", "the movie 's biggest offense is its complete and utter lack of tension .",
-                 "Click on this link.This is Spam", "unless you are in dire need of a diesel fix , there is no real reason to see it ."]
-
-    text_list2 = ["Das ist eine Spam Nachricht","Your iCloud storage is almost full. Please click on the link", " Hallo, wie gehts dir?","Hello, how are you?"]
-
-
-    print("Untrained model predictions:")
-    print("----------------------------")
     @staticmethod
     def classify(self, email, betreff, url, absender):
         ausgabe=[]
